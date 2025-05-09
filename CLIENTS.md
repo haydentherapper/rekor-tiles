@@ -221,7 +221,7 @@ An example SigningConfig with annotations is below:
     // it supports.
     "rekorTlogUrls": [
         {
-            "url": "https://rekor-2025-1.sigstore.dev",
+            "url": "https://log2025-01.rekor.sigstore.dev",
             "majorApiVersion": 2,
             "validFor": {
                 "start": "<UTC timestamp>"
@@ -367,3 +367,59 @@ be distributed by Sigstore's TUF root.
 
 Co-signed checkpoints will also be timestamped, so they can serve
 as an independent signed timestamp instead of an RFC 3161 timestamp.
+
+# Rekor v2, the bash way
+
+Clone the service if you haven't already: `git clone https://github.com/sigstore/rekor-tiles.git`
+
+Spin up the service: `docker compose up --build --wait`
+
+Create a signed artifact:
+
+```bash
+openssl ecparam -genkey -name prime256v1 > ec_private.pem && openssl ec -in ec_private.pem -pubout > ec_public.pem
+head -c 128 < /dev/urandom > artifact
+openssl dgst -sha256 -sign ec_private.pem artifact > artifact.sig
+openssl dgst -sha256 -verify ec_public.pem -signature artifact.sig artifact # Should return Verified OK
+```
+
+Generate artifact digest:
+
+```bash
+cat artifact | openssl dgst -binary -sha256 > artifact_dgst
+```
+
+Post an entry:
+
+```bash
+curl  -H \
+ "Accept: application/json" -X \
+POST http://localhost:3003/api/v2/log/entries -o rekor_response -d "{ \"hashedRekordRequestV0_0_2\":{ \"digest\":\"$(cat artifact_dgst|base64)\", \"signature\":{ \"content\": \"$(cat artifact.sig | base64)\", \"verifier\": { \"key_details\": \"PKIX_ECDSA_P256_SHA_256\", \"public_key\": { \"raw_bytes\": \"$(openssl base64 -d -in ec_public.pem | base64)\" } } } } }"
+```
+
+View the response with `cat rekor_response | jq .` Example:
+
+```json
+{
+  "logIndex": "0",
+  "logId": {
+    "keyId": "2AtEIMfG6Y41yK0tcwRTBS2tjhOrjKGIpDkHFgp65g0="
+  },
+  "kindVersion": {
+    "kind": "hashedrekord",
+    "version": "0.0.2"
+  },
+  "integratedTime": "0",
+  "inclusionPromise": null,
+  "inclusionProof": {
+    "logIndex": "0",
+    "rootHash": "OWI5MjU1MWIxZTA0NGIzNmQ0ZGE0MTU0M2UwNjEwZjVhNzQyMDNiN2JiOWEzOWYwNDExOTZlMTI2MTg5NmM3NQ==",
+    "treeSize": "1",
+    "hashes": [],
+    "checkpoint": {
+      "envelope": "rekor-local\n1\nm5JVGx4ESzbU2kFUPgYQ9adCA7e7mjnwQRluEmGJbHU=\n\n— rekor-local 2AtEIIwnbtxrneJ7L1lQebfBRl7TxK84DTmx+kcZi7A25cBDgESI23f9ylThAlOireJ7U+H8eZF/4kJQcn9o5Qt8mQU=\n"
+    }
+  },
+  "canonicalizedBody": "eyJhcGlWZXJzaW9uIjoiMC4wLjIiLCJraW5kIjoiaGFzaGVkcmVrb3JkIiwic3BlYyI6eyJoYXNoZWRSZWtvcmRWMF8wXzIiOnsiZGF0YSI6eyJhbGdvcml0aG0iOiJTSEEyXzI1NiIsImRpZ2VzdCI6ImR5ajRlZG5ZSGpONC96c2pqQmVlTGFoUzlzbHA5N1o2N0xUQVZ4anJqWHc9In0sInNpZ25hdHVyZSI6eyJjb250ZW50IjoiTUVRQ0lCK1lQYTlvM1NOMHNRNHVkdUdmK21aeHdGZk9oRlowQ2d5K3A3VnQxbzJTQWlBUEZESHFPQUpMWW12dENXT3NEeU5ZMUg0VjN6bTRORURZczNOeXZIaDFQZz09IiwidmVyaWZpZXIiOnsia2V5RGV0YWlscyI6IlBLSVhfRUNEU0FfUDI1Nl9TSEFfMjU2IiwicHVibGljS2V5Ijp7InJhd0J5dGVzIjoiTUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFMnNsT2Y4ZVpjajJtb1cydDRVRmo3dkNMNlFwRHprRHFxU1VtbTRPSkNWdklhdUtMeG0wYUdzM1ZNUFBmYXVNUGFNdXRuMC9zM2pnMHJyb0Z4b2ljeWc9PSJ9fX19fX0="
+}
+```
